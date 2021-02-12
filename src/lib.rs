@@ -77,7 +77,6 @@ impl Regex {
                         b'W' => NotAlpha,
                         b's' => Whitespace,
                         b'S' => NotWhitespace,
-                        // TODO: Shouldn't this be Metachar?
                         other => Char(other)
                     }
                 }
@@ -172,11 +171,9 @@ impl Regex {
 
     pub fn matches<'t>(&self, text: &'t [u8]) -> Option<&'t [u8]> {
         match self.pattern[0] {
-            // We don't like empty regex's for some reason
-            Unused => None,
             Begin => match_beginning(&self, 1, text),
             _ => {
-                for start in 0.. text.len() {
+                for start in 0..= text.len() {
                     if let Some(r) = match_beginning(&self, 0, &text[start..]) {
                         return Some(r)
                     }

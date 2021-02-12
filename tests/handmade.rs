@@ -14,3 +14,9 @@ fn test_brackets() {
 fn nested_quants() {
     assert_eq!(Some(&b"aaaa"[..]), matches(b"a?+", b"aaaaaaaaa"));
 }
+
+#[test]
+fn test_nearly_empty() {
+    assert_eq!(Some(&b""[..]), matches(b"", b""));
+    assert_eq!(Some(&b""[..]), matches(b"a?", b""));
+}

@@ -5,6 +5,8 @@ use core::{u8, u16};
 
 pub const MAX_REGEXP_OBJECTS: usize = 30;
 pub const MAX_CHAR_CLASS_LEN: usize = 40;
+pub const MAX_NESTING: usize = 20;
+
 pub struct Regex {
     pattern: [RegexObj; MAX_REGEXP_OBJECTS],
     class_buf: [u8; MAX_CHAR_CLASS_LEN],
@@ -13,12 +15,11 @@ pub struct Regex {
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 enum RegexObj {
     Unused,
+
+    // "String feature" objects (that match a char, or a "conceptual" char like beginning/end)
     Dot,
     Begin,
     End,
-    QuestionMark,
-    Star,
-    Plus,
     Char(u8),
     // Use short indicies so we can pack this enum into a u32 :)
     CharClass{ begin: u16, len: u8 },
@@ -29,6 +30,10 @@ enum RegexObj {
     NotAlpha,
     Whitespace,
     NotWhitespace,
+
+    // End thread
+    Jmp(u8),
+    Split(u8, u8),
 }
 
 // Bring RegexObj variants directly into local namespace....
@@ -43,15 +48,14 @@ impl Regex {
         let mut i = 0;
         // Index into regex.pattern
         let mut j = 0;
+        let mut restart_point = 0;
 
         while i < pattern.len() && j < MAX_REGEXP_OBJECTS {
             regex.pattern[j] = match *pattern.get(i)? {
+                // Char like
                 b'^' => Begin,
                 b'$' => End,
                 b'.' => Dot,
-                b'*' => Star,
-                b'+' => Plus,
-                b'?' => QuestionMark,
                 b'\\' => {
                     i += 1;
                     match *pattern.get(i)? {
@@ -98,9 +102,43 @@ impl Regex {
                         InvCharClass { begin, len: len as u8 }
                     }
                 }
+
+                // Control flow
+                b'+' => {
+                    regex.pattern[j] = Split(restart_point as u8, j as u8 + 1);
+                    i += 1;
+                    j += 1;
+                    continue;
+                },
+                b'*' => {
+                    // Make sure we have space
+                    if j + 1 >= regex.pattern.len() {
+                        return None;
+                    }
+                    regex.pattern.copy_within(restart_point.. j, restart_point + 1);
+                    regex.pattern[restart_point] = Split(restart_point as u8 + 1, j as u8 + 2);
+                    regex.pattern[j+1] = Jmp(restart_point as u8);
+
+                    i += 1;
+                    j += 2;
+                    continue;
+                },
+                b'?' => {
+                    if j >= regex.pattern.len() {
+                        return None;
+                    }
+                    regex.pattern.copy_within(restart_point.. j, restart_point + 1);
+                    // TODO: This is ungreedy matching the original, aren't most regex engines greedy?
+                    regex.pattern[restart_point] = Split(j as u8 + 1, restart_point as u8 + 1);
+                    i += 1;
+                    j += 1;
+                    continue;
+                },
+
                 other => Char(other),
             };
 
+            restart_point = j;
             i += 1;
             j += 1;
         }
@@ -140,17 +178,21 @@ fn match_beginning<'t>(regex: &Regex, pattern_idx: usize, text: &'t [u8]) -> Opt
 // Returns ptr to char after last match.
 fn match_pattern(regex: &Regex, mut pattern_idx: usize, mut text: &[u8]) -> Option<usize> {
     loop {
-        match (*regex.pattern.get(pattern_idx)?, *regex.pattern.get(pattern_idx + 1)?) {
+        match *regex.pattern.get(pattern_idx)? {
             // Differs from reference?
-            (Unused, _) => return Some(text.as_ptr() as usize),
-            (End, Unused) => return if text.len() == 0 { Some(text.as_ptr() as usize) } else { None },
+            Unused => return Some(text.as_ptr() as usize),
+            End => return if text.len() == 0 { Some(text.as_ptr() as usize) } else { None },
 
-            (obj, QuestionMark) => return match_questionmark(regex, obj, pattern_idx + 2, text),
-            (obj, Star) => return match_repeat(regex, obj, 0, pattern_idx + 2, text),
-            (obj, Plus) => return match_repeat(regex, obj, 1, pattern_idx + 2, text),
+            Jmp(idx) => pattern_idx = idx as usize,
+            Split(lhs, rhs) =>
+                if let Some(text) = match_pattern(regex, lhs as usize, text) {
+                    return Some(text)
+                } else {
+                    pattern_idx = rhs as usize
+                }
 
             // Simple patterns
-            (p, _) if match_one(regex, p, text) => {
+            p if match_one(regex, p, text) => {
                 pattern_idx += 1;
                 text = &text[1..];
             },
@@ -159,33 +201,6 @@ fn match_pattern(regex: &Regex, mut pattern_idx: usize, mut text: &[u8]) -> Opti
             _ => return None
         };
     }
-}
-
-fn match_questionmark(regex: &Regex, question: RegexObj, pattern_idx: usize, mut text: &[u8]) -> Option<usize> {
-    // TODO: Shouldn't I do the other (greedy) one first?
-    if let Some(end) = match_pattern(regex, pattern_idx, text) {
-        return Some(end)
-    }
-
-    if match_one(regex, question, text) {
-        text = text.get(1..)?;
-        match_pattern(regex, pattern_idx, text)
-    } else {
-        None
-    }
-}
-
-fn match_repeat(regex: &Regex, obj: RegexObj, min_repeat: usize, pattern_idx: usize, text: &[u8]) -> Option<usize> {
-    let mut max_l = 0;
-    while text.len() > max_l && match_one(regex, obj, &text[max_l..]) {
-        max_l += 1;
-    }
-    for i in (min_repeat ..= max_l).rev() {
-        if let Some(end) = match_pattern(regex, pattern_idx, &text[i..]) {
-            return Some(end)
-        }
-    }
-    None
 }
 
 fn match_one(regex: &Regex, p: RegexObj, text: &[u8]) -> bool {

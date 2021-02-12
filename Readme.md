@@ -12,6 +12,8 @@ To build the c library run `cargo build --example tiny_regex_rs --release`, the 
 
 We run the original tiny-regex-c tests against our c-ffi by using `sh tiny_regex_c_tests.sh`. We pass all of them.
 
+We run our own tests via `cargo test --features debug`.
+
 ## Differences
 
 Apart from the language difference, the rust edition:

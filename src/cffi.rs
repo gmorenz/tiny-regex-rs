@@ -1,4 +1,4 @@
-#![cfg_attr(not(debug), no_std)]
+#![cfg_attr(not(feature = "debug"), no_std)]
 
 use tiny_regex_rs::*;
 use core::{ptr, slice};
@@ -49,10 +49,11 @@ pub unsafe extern "C" fn re_match(pattern: *const u8, text: *const u8, match_len
 #[allow(unused_variables)]
 pub unsafe extern "C" fn re_print(regex: &Regex) {
     #[cfg(feature = "debug")]
-    println!("\t{:?}", regex.arr);
+    println!("\t{:?}", regex);
 }
 
 #[panic_handler]
+#[cfg(not(feature = "debug"))]
 unsafe fn abort_on_panic(_info: &core::panic::PanicInfo) -> ! {
     // Force abort on stable nostd rust by panicing inside a panic :'(
     struct A;

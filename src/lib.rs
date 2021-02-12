@@ -7,6 +7,7 @@ pub const MAX_REGEXP_OBJECTS: usize = 30;
 pub const MAX_CHAR_CLASS_LEN: usize = 40;
 pub const MAX_NESTING: usize = 20;
 
+#[derive(Debug)]
 pub struct Regex {
     pattern: [RegexObj; MAX_REGEXP_OBJECTS],
     class_buf: [u8; MAX_CHAR_CLASS_LEN],
@@ -49,6 +50,17 @@ impl Regex {
         // Index into regex.pattern
         let mut j = 0;
         let mut restart_point = 0;
+
+        let mut brackets = [0; MAX_NESTING];
+        let mut brackets_used = 0;
+
+        let shift = |pattern: &mut [RegexObj; MAX_REGEXP_OBJECTS], brackets: &mut [u8; MAX_NESTING], mut bracket_idx, start, end| {
+            pattern.copy_within(start.. end, start + 1);
+            while bracket_idx > 0 && brackets[bracket_idx] >= start as u8 {
+                brackets[bracket_idx] += 1;
+                bracket_idx -= 1;
+            }
+        };
 
         while i < pattern.len() && j < MAX_REGEXP_OBJECTS {
             regex.pattern[j] = match *pattern.get(i)? {
@@ -103,7 +115,19 @@ impl Regex {
                     }
                 }
 
-                // Control flow
+                b'(' => {
+                    *brackets.get_mut(brackets_used)? = j as u8;
+                    brackets_used += 1;
+                    i += 1;
+                    continue;
+                }
+                b')' => {
+                    brackets_used -= 1;
+                    restart_point = *brackets.get(brackets_used)? as usize;
+                    i += 1;
+                    continue;
+                }
+
                 b'+' => {
                     regex.pattern[j] = Split(restart_point as u8, j as u8 + 1);
                     i += 1;
@@ -115,7 +139,7 @@ impl Regex {
                     if j + 1 >= regex.pattern.len() {
                         return None;
                     }
-                    regex.pattern.copy_within(restart_point.. j, restart_point + 1);
+                    shift(&mut regex.pattern, &mut brackets, brackets_used, restart_point, j);
                     regex.pattern[restart_point] = Split(restart_point as u8 + 1, j as u8 + 2);
                     regex.pattern[j+1] = Jmp(restart_point as u8);
 
@@ -127,7 +151,7 @@ impl Regex {
                     if j >= regex.pattern.len() {
                         return None;
                     }
-                    regex.pattern.copy_within(restart_point.. j, restart_point + 1);
+                    shift(&mut regex.pattern, &mut brackets, brackets_used, restart_point, j);
                     // TODO: This is ungreedy matching the original, aren't most regex engines greedy?
                     regex.pattern[restart_point] = Split(j as u8 + 1, restart_point as u8 + 1);
                     i += 1;

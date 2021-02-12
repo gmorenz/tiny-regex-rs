@@ -7,7 +7,7 @@ pub const MAX_REGEXP_OBJECTS: usize = 30;
 pub const MAX_CHAR_CLASS_LEN: usize = 40;
 pub struct Regex {
     pattern: [RegexObj; MAX_REGEXP_OBJECTS],
-    ccl_buf: [u8; MAX_CHAR_CLASS_LEN],
+    class_buf: [u8; MAX_CHAR_CLASS_LEN],
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -37,7 +37,7 @@ use RegexObj::*;
 impl Regex {
     pub fn compile(pattern: &[u8]) -> Option<Regex> {
         let mut regex = Regex::zeroed();
-        let mut ccl_bufidx = 0;
+        let mut class_bufidx = 0;
 
         // Index into pattern
         let mut i = 0;
@@ -68,7 +68,7 @@ impl Regex {
                 // Character class
                 b'[' => {
                     i += 1;
-                    let buf = &mut regex.ccl_buf[ccl_bufidx..];
+                    let buf = &mut regex.class_buf[class_bufidx..];
                     let negated = *pattern.get(i)? == b'^';
                     if negated { i += 1 };
 
@@ -86,12 +86,12 @@ impl Regex {
                         i += 1;
                     }
 
-                    if len > u8::MAX as usize || ccl_bufidx > u16::MAX as usize {
+                    if len > u8::MAX as usize || class_bufidx > u16::MAX as usize {
                         return None
                     }
 
-                    let begin = ccl_bufidx as u16;
-                    ccl_bufidx += len;
+                    let begin = class_bufidx as u16;
+                    class_bufidx += len;
                     if !negated {
                         CharClass{ begin, len: len as u8 }
                     } else {
@@ -112,10 +112,10 @@ impl Regex {
         match self.pattern[0] {
             // We don't like empty regex's for some reason
             Unused => None,
-            Begin => match_beginning(&self.ccl_buf, &self.pattern[1..], text),
+            Begin => match_beginning(&self, 1, text),
             _ => {
                 for start in 0.. text.len() {
-                    if let Some(r) = match_beginning(&self.ccl_buf, &self.pattern, &text[start..]) {
+                    if let Some(r) = match_beginning(&self, 0, &text[start..]) {
                         return Some(r)
                     }
                 }
@@ -127,31 +127,31 @@ impl Regex {
     pub const fn zeroed() -> Regex {
         Regex {
             pattern: [RegexObj::Unused; MAX_REGEXP_OBJECTS],
-            ccl_buf: [0; MAX_CHAR_CLASS_LEN],
+            class_buf: [0; MAX_CHAR_CLASS_LEN],
         }
     }
 }
 
-fn match_beginning<'t>(buf: &[u8; MAX_CHAR_CLASS_LEN], pattern: &[RegexObj], text: &'t [u8]) -> Option<&'t [u8]> {
-    let end_ptr = match_pattern(buf, pattern, text)?;
+fn match_beginning<'t>(regex: &Regex, pattern_idx: usize, text: &'t [u8]) -> Option<&'t [u8]> {
+    let end_ptr = match_pattern(regex, pattern_idx, text)?;
     Some(&text[..end_ptr - text.as_ptr() as usize])
 }
 
 // Returns ptr to char after last match.
-fn match_pattern(buf: &[u8; MAX_CHAR_CLASS_LEN], mut pattern: &[RegexObj], mut text: &[u8]) -> Option<usize> {
+fn match_pattern(regex: &Regex, mut pattern_idx: usize, mut text: &[u8]) -> Option<usize> {
     loop {
-        match (*pattern.get(0)?, *pattern.get(1)?) {
+        match (*regex.pattern.get(pattern_idx)?, *regex.pattern.get(pattern_idx + 1)?) {
             // Differs from reference?
             (Unused, _) => return Some(text.as_ptr() as usize),
             (End, Unused) => return if text.len() == 0 { Some(text.as_ptr() as usize) } else { None },
 
-            (obj, QuestionMark) => return match_questionmark(buf, obj, pattern.get(2..)?, text),
-            (obj, Star) => return match_repeat(buf, obj, 0, pattern.get(2..)?, text),
-            (obj, Plus) => return match_repeat(buf, obj, 1, pattern.get(2..)?, text),
+            (obj, QuestionMark) => return match_questionmark(regex, obj, pattern_idx + 2, text),
+            (obj, Star) => return match_repeat(regex, obj, 0, pattern_idx + 2, text),
+            (obj, Plus) => return match_repeat(regex, obj, 1, pattern_idx + 2, text),
 
             // Simple patterns
-            (p, _) if match_one(buf, p, text) => {
-                pattern = &pattern[1..];
+            (p, _) if match_one(regex, p, text) => {
+                pattern_idx += 1;
                 text = &text[1..];
             },
 
@@ -161,39 +161,40 @@ fn match_pattern(buf: &[u8; MAX_CHAR_CLASS_LEN], mut pattern: &[RegexObj], mut t
     }
 }
 
-fn match_questionmark(buf: &[u8; MAX_CHAR_CLASS_LEN], question: RegexObj, pattern: &[RegexObj], mut text: &[u8]) -> Option<usize> {
-    if let Some(end) = match_pattern(buf, pattern, text) {
+fn match_questionmark(regex: &Regex, question: RegexObj, pattern_idx: usize, mut text: &[u8]) -> Option<usize> {
+    // TODO: Shouldn't I do the other (greedy) one first?
+    if let Some(end) = match_pattern(regex, pattern_idx, text) {
         return Some(end)
     }
 
-    if match_one(buf, question, text) {
+    if match_one(regex, question, text) {
         text = text.get(1..)?;
-        match_pattern(buf, pattern, text)
+        match_pattern(regex, pattern_idx, text)
     } else {
         None
     }
 }
 
-fn match_repeat(buf: &[u8; MAX_CHAR_CLASS_LEN], obj: RegexObj, min_repeat: usize, pattern: &[RegexObj], text: &[u8]) -> Option<usize> {
+fn match_repeat(regex: &Regex, obj: RegexObj, min_repeat: usize, pattern_idx: usize, text: &[u8]) -> Option<usize> {
     let mut max_l = 0;
-    while text.len() > max_l && match_one(buf, obj, &text[max_l..]) {
+    while text.len() > max_l && match_one(regex, obj, &text[max_l..]) {
         max_l += 1;
     }
     for i in (min_repeat ..= max_l).rev() {
-        if let Some(end) = match_pattern(buf, pattern, &text[i..]) {
+        if let Some(end) = match_pattern(regex, pattern_idx, &text[i..]) {
             return Some(end)
         }
     }
     None
 }
 
-fn match_one(buf: &[u8; MAX_CHAR_CLASS_LEN], p: RegexObj, text: &[u8]) -> bool {
+fn match_one(regex: &Regex, p: RegexObj, text: &[u8]) -> bool {
     if text.len() == 0 { return false };
     let c = text[0];
     match p {
         Dot => match_dot(c),
-        CharClass{begin, len} => match_charclass(buf, begin, len, c),
-        InvCharClass{begin, len} => !match_charclass(buf, begin, len, c),
+        CharClass{begin, len} => match_charclass(regex, begin, len, c),
+        InvCharClass{begin, len} => !match_charclass(regex, begin, len, c),
         Digit => match_digit(c),
         NotDigit => !match_digit(c),
         Alpha => match_alphanum(c),
@@ -211,8 +212,8 @@ fn match_dot(_: u8) -> bool {
     true
 }
 
-fn match_charclass(buf: &[u8; MAX_CHAR_CLASS_LEN], begin: u16, len: u8, c: u8) -> bool {
-    let class = &buf[begin as usize.. begin as usize + len as usize];
+fn match_charclass(regex: &Regex, begin: u16, len: u8, c: u8) -> bool {
+    let class = &regex.class_buf[begin as usize.. begin as usize + len as usize];
     let mut i = 0;
     while i < class.len() {
         if match_range(c, &class[i..]) {

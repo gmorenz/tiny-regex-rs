@@ -12,11 +12,10 @@ cd tiny-regex-c
 git checkout rust_build
 make rust_all
 echo "Rust time" > ../timings
-/usr/bin/time --output=../timings --append make test
+/usr/bin/time --output=../timings --append make test_bench_rust
 
 # Bench C
 
-git checkout master
 make all
 echo "C time" >> ../timings
-/usr/bin/time --output=../timings --append make test
+/usr/bin/time --output=../timings --append make test_bench_c

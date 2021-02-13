@@ -20,3 +20,8 @@ fn test_nearly_empty() {
     assert_eq!(Some(&b""[..]), matches(b"", b""));
     assert_eq!(Some(&b""[..]), matches(b"a?", b""));
 }
+
+#[test]
+fn simple() {
+    assert_eq!(Some(&b"abc"[..]), matches(b"abc", b"abc"));
+}

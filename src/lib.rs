@@ -1,7 +1,8 @@
-#![cfg_attr(not(debug), no_std)]
-#[cfg(debug)] extern crate core;
+#![cfg_attr(not(feature = "debug"), no_std)]
+#[cfg(not(feature = "debug"))] extern crate core;
 
 use core::{u8, u16};
+use core::cell::Cell;
 
 pub const MAX_REGEXP_OBJECTS: usize = 30;
 pub const MAX_CHAR_CLASS_LEN: usize = 40;
@@ -42,6 +43,7 @@ use RegexObj::*;
 
 impl Regex {
     pub fn compile(pattern: &[u8]) -> Option<Regex> {
+        // println!("Compile {:?} ({:?})", pattern, std::str::from_utf8(pattern));
         let mut regex = Regex::zeroed();
         let mut class_bufidx = 0;
 
@@ -170,17 +172,8 @@ impl Regex {
     }
 
     pub fn matches<'t>(&self, text: &'t [u8]) -> Option<&'t [u8]> {
-        match self.pattern[0] {
-            Begin => match_beginning(&self, 1, text),
-            _ => {
-                for start in 0..= text.len() {
-                    if let Some(r) = match_beginning(&self, 0, &text[start..]) {
-                        return Some(r)
-                    }
-                }
-                None
-            }
-        }
+        // println!("Matches {:?} ({:?})", text, std::str::from_utf8(text));
+        matches_nfa(self, text)
     }
 
     pub const fn zeroed() -> Regex {
@@ -191,42 +184,149 @@ impl Regex {
     }
 }
 
-fn match_beginning<'t>(regex: &Regex, pattern_idx: usize, text: &'t [u8]) -> Option<&'t [u8]> {
-    let end_ptr = match_pattern(regex, pattern_idx, text)?;
-    Some(&text[..end_ptr - text.as_ptr() as usize])
+#[derive(Clone, Default, Debug)]
+struct NfaStateInfo {
+    start: Cell<u32>,
+    // Option here is actually redundant with pattern[state], but let's keep it for now.
+    end: Cell<Option<u32>>,
+    next: Cell<Option<u8>>,
+    used: Cell<bool>,
 }
 
-// Returns ptr to char after last match.
-fn match_pattern(regex: &Regex, mut pattern_idx: usize, mut text: &[u8]) -> Option<usize> {
-    loop {
-        match *regex.pattern.get(pattern_idx)? {
-            // Differs from reference?
-            Unused => return Some(text.as_ptr() as usize),
-            End => return if text.len() == 0 { Some(text.as_ptr() as usize) } else { None },
+fn matches_nfa<'t>(regex: &Regex, text: &'t [u8]) -> Option<&'t [u8]> {
+    // The n_th element in this array, represents the metatdata about how we entered
+    // the n_th state of the nfa. The states form a linked list describing the "priority"
+    // which each state has - allowing us to do things like greedy matching.
+    let mut state_info: [NfaStateInfo; MAX_REGEXP_OBJECTS] = Default::default();
 
-            Jmp(idx) => pattern_idx = idx as usize,
-            Split(lhs, rhs) =>
-                if let Some(text) = match_pattern(regex, lhs as usize, text) {
-                    return Some(text)
-                } else {
-                    pattern_idx = rhs as usize
-                }
-
-            // Simple patterns
-            p if match_one(regex, p, text) => {
-                pattern_idx += 1;
-                text = &text[1..];
-            },
-
-            // Failed to match
-            _ => return None
+    let (initial_idx, begin) =
+        if regex.pattern[0] == Begin {
+            (1, true)
+        } else {
+            (0, false)
         };
+    let head_ptr = Cell::new(None);
+    make_epsilon_transitions_and_insert(
+        regex,
+        NfaStateInfo{ used: Cell::new(true), .. Default::default() },
+        initial_idx,
+        0,
+        &mut &head_ptr,
+        &state_info);
+
+
+    for i in 0.. text.len() {
+        #[cfg(feature = "debug")] {
+            println!("\nState info:");
+            for i in 0.. MAX_REGEXP_OBJECTS {
+                if state_info[i].used.get() {
+                    println!("\t{} {:?} {:?}", i, regex.pattern[i], state_info[i], );
+                }
+            }
+            println!("Starting at: {:?}", head_ptr);
+        }
+        // Short circuit if the first state is finished
+        let head_state = head_ptr.get()?;
+        if Unused == regex.pattern[head_state as usize] {
+            let start = state_info[head_state as usize].start.get();
+            let end = state_info[head_state as usize].end.get().unwrap();
+            return Some(&text[start as usize.. end as usize])
+        }
+
+        let mut current_state = head_ptr.get();
+        // println!("current state {:?}", current_state);
+        let mut new_next_ptr = &head_ptr;
+        let new_state_info: [NfaStateInfo; MAX_REGEXP_OBJECTS] = Default::default();
+        while let Some(state) = current_state {
+            current_state = state_info[state as usize].next.get();
+            propogate_state(regex, state_info[state as usize].clone(), state as usize, text[i], i, &mut new_next_ptr, &new_state_info);
+        }
+
+        // Add a new state starting on the i+1th character - if there isn't something already in the first state
+        if !begin && !new_state_info[0].used.get() {
+            make_epsilon_transitions_and_insert(
+                regex,
+                NfaStateInfo{ used: Cell::new(true), start: Cell::new(i as u32 + 1), .. Default::default() },
+                initial_idx,
+                i+1,
+                &mut new_next_ptr,
+                &new_state_info);
+        }
+
+        state_info = new_state_info;
+    }
+
+    // Search for finished state
+    let mut current_state = head_ptr.get();
+    while let Some(state) = current_state {
+        if matches!(regex.pattern[state as usize], Unused | End) {
+            let start = state_info[state as usize].start.get();
+            let end = state_info[state as usize].end.get().unwrap_or(text.len() as u32);
+            return Some(&text[start as usize.. end as usize])
+        }
+        current_state = state_info[state as usize].next.get();
+    }
+
+    None
+}
+
+fn propogate_state<'next>(
+    regex: &Regex,
+    state_info: NfaStateInfo,
+    state: usize,
+    c: u8,
+    text_idx: usize,
+    prev_next_ptr: &mut &'next Cell<Option<u8>>,
+    new_state_info: &'next [NfaStateInfo; MAX_REGEXP_OBJECTS]
+) {
+    // println!("Propogating {} on {} @ {}", state, c, text_idx);
+    let obj = regex.pattern[state];
+    if obj == Unused {
+        return make_epsilon_transitions_and_insert(regex, state_info, state, text_idx + 1, prev_next_ptr, new_state_info);
+    }
+
+    let new_state = state + 1;
+    if match_one(regex, obj, c) {
+        make_epsilon_transitions_and_insert(regex, state_info, new_state, text_idx + 1, prev_next_ptr, new_state_info);
+    } // else we failed to transition
+}
+
+fn make_epsilon_transitions_and_insert<'next>(
+    regex: &Regex,
+    state_info: NfaStateInfo,
+    state: usize,
+    text_idx: usize,
+    prev_next_ptr: &mut &'next Cell<Option<u8>>,
+    new_state_info: &'next [NfaStateInfo; MAX_REGEXP_OBJECTS]
+) {
+    // println!("Inserting {} type {:?} info {:?}", state, regex.pattern[state], state_info);
+    match regex.pattern[state] {
+        Jmp(new_state) =>
+            make_epsilon_transitions_and_insert(regex, state_info, new_state as usize, text_idx, prev_next_ptr, new_state_info),
+        Split(lhs, rhs) => {
+            make_epsilon_transitions_and_insert(regex, state_info.clone(), lhs as usize, text_idx, prev_next_ptr, new_state_info);
+            make_epsilon_transitions_and_insert(regex, state_info.clone(), rhs as usize, text_idx, prev_next_ptr, new_state_info);
+        }
+        obj => {
+            // Terminal state, write it unless a higher priority execution already reached this state.
+            if !new_state_info[state].used.get() {
+                new_state_info[state].used.set(true);
+                new_state_info[state].next.set(None);
+                new_state_info[state].start.set(state_info.start.get());
+                let end =
+                    if obj == Unused {
+                        Some(state_info.end.get().unwrap_or(text_idx as u32))
+                    } else { None };
+                new_state_info[state].end.set(end);
+
+                (*prev_next_ptr).set(Some(state as u8));
+                *prev_next_ptr = &new_state_info[state].next;
+            }
+        },
     }
 }
 
-fn match_one(regex: &Regex, p: RegexObj, text: &[u8]) -> bool {
-    if text.len() == 0 { return false };
-    let c = text[0];
+fn match_one(regex: &Regex, p: RegexObj, c: u8) -> bool {
     match p {
         Dot => match_dot(c),
         CharClass{begin, len} => match_charclass(regex, begin, len, c),

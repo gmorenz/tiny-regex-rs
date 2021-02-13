@@ -1,6 +1,6 @@
 # Tiny Regex Rust Edition
 
-This started a port of [kokke](https://github.com/kokke)'s [tiny-regex-c](https://github.com/kokke/tiny-regex-c) to safe (and `nostd`) rust, though the internals have changed a bit since then. Like the original it implements a small subset of regex in a manner suitable for embedded use. We expose both a simple rust api, and the same C interface that tiny-regex-c does.
+This [started](https://github.com/gmorenz/tiny-regex-rs/tree/master) as a port of [kokke](https://github.com/kokke)'s [tiny-regex-c](https://github.com/kokke/tiny-regex-c) to safe (and `nostd`) rust, though the internals have changed a bit since then. Like the original it implements a small subset of regex in a manner suitable for embedded use. We expose both a simple rust api, and the same C interface that tiny-regex-c does.
 
 ## Building
 

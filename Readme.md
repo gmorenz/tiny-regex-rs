@@ -1,6 +1,6 @@
 # Tiny Regex Rust Edition
 
-This is a port of [kokke](https://github.com/kokke)'s [tiny-regex-c](https://github.com/kokke/tiny-regex-c) to safe (and `nostd`) rust, with some minor differences outlined the below. Like the original it implements a small subset of regex in a manner suitable for embedded use. We expose both a simple rust api, and the same C interface that tiny-regex-c does.
+This started a port of [kokke](https://github.com/kokke)'s [tiny-regex-c](https://github.com/kokke/tiny-regex-c) to safe (and `nostd`) rust, though the internals have changed a bit since then. Like the original it implements a small subset of regex in a manner suitable for embedded use. We expose both a simple rust api, and the same C interface that tiny-regex-c does.
 
 ## Building
 
@@ -16,27 +16,33 @@ We run our own tests via `cargo test --features debug`.
 
 ## Differences
 
-Apart from the language difference, the rust edition:
+|                                   | Rust Edition (nfa branch)                                                  | C Edition                                                                                  |
+|-----------------------------------|----------------------------------------------------------------------------|--------------------------------------------------------------------------------------------|
+| Regex VM Type                     | NFA                                                                        | Backtracking                                                                               |
+| Regex Features                    | C-Edition + brackets for nesting/repeating groups                          | ^, $, *, +, ?, ., \w, \W, \d, \D, \s, \S, character classes                                |
+| Worst Case Performance (time)     | Linear (size of regex * size on input)                                     | Exponential                                                                                |
+| Best Case Performance (time)      | Pretty good                                                                | Slightly better (but slower than a library like rure)                                      |
+| Static Memory Allocation          | 130 bytes per Regex Objec (1 statically allocated in cffi)                 | 520 statically allocated bytes (for a single Regex object equivalent)                      |
+| Dynamic Memory Allocation         | 480 bytes (+ normal stack overhead) while evaluating a regex               | Just normal stack overhead                                                                 |
+| Intenal String Repr               | (Ptr, Length) pair                                                         | Null Terminated                                                                            |
+| Memory safety                     | For sure                                                                   | [Almost for sure](https://github.com/kokke/tiny-regex-c/blob/master/formal_verification.md)|
+| Thread Safety                     | In the rust api, and the re_match function in the c api                    | No, compiling a new regex clobbes existing regex's                                         |
+| Quirks                            | * counts as 2 regex objects for max regex length, re_print not implemented | `[a-b-]` fails to match `-`, if you first compile `aba` then `a$a`, `aba` will match `a$a` |
 
- - Natively uses (ptr, length) strings instead of null terminated strings. The C library runs `strlen` on it's input before passing it to the rust library to convert it to a form suitable for rust.
- - The rust edition properly handles classes of the form `[a-b-]` (that pattern should match the -), where the c version fails it's own tests relating to this.
- - The C edition has a curious behavior where it does not fully wipe state between regex compilations, effecting the behavior of misusing special characters. For example if you first compile a regex like "aba", and then a regex like "a$a", the string "aba" will still match the second regex. The rust edition does not have this behavior.
- - The C edition stores the regex in a static variable and as a result isn't thread safe, and destroys previously compiled regex's when you build a new one. The rust cffi `re_compile` and `re_matchp` functions work similarly. The rust cffi `re_match` and the rust native api store the regex on the stack, and are threadsafe and do not effect previously compiled regex's.
-  - Unless the debug feature is enabled (which pulls in all of std) we don't implement re_print in the cffi.
 
 ## Performance comparison
 
-They are (unsurprisingly, since it's a pretty direct port right now) very similar. For example, the tiny-regex-c test's take 98.44 seconds to run on my computer when built with the original re.c, and 100.48 seconds when built with the rust ffi (generated via `sh rough_bench.sh`). The rust cffi is likely slightly less efficient because it needs to run strlen on it's inputs before using them.
+Since we're using different types of regex engines this is hard to compare, on "test2" in the tiny-regex-c repository the rust cffi version takes `0.22` seconds while the C version takes `6.29` seconds, but that is a test well suited for NFAs. The rust cffi is slightly less efficient than the rust native code because it needs to run strlen on it's inputs before using them.
 
-Binary size is also similar, though *slightly* larger on rust.
+Binary size is similar between C and rust, though *slightly* larger on rust.
 
 ```
 # Rust binary sizes
--rwxr-xr-x 1 greg users  28K Feb 12 07:00 test1
--rwxr-xr-x 1 greg users  54K Feb 12 07:00 test2
--rwxr-xr-x 1 greg users  17K Feb 12 07:00 test_compile
--rwxr-xr-x 1 greg users  17K Feb 12 07:00 test_rand
--rwxr-xr-x 1 greg users  17K Feb 12 07:00 test_rand_neg
+-rwxr-xr-x 1 greg users  27K Feb 13 10:39 test1
+-rwxr-xr-x 1 greg users  53K Feb 13 10:39 test2
+-rwxr-xr-x 1 greg users  21K Feb 13 10:39 test_compile
+-rwxr-xr-x 1 greg users  21K Feb 13 10:39 test_rand
+-rwxr-xr-x 1 greg users  21K Feb 13 10:39 test_rand_neg
 ```
 
 ```

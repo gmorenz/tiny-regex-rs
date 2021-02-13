@@ -381,3 +381,12 @@ fn match_whitespace(c: u8) -> bool {
 pub fn matches<'t>(pattern: &[u8], text: &'t [u8]) -> Option<&'t [u8]> {
     Regex::compile(pattern).and_then(|regex| regex.matches(text))
 }
+
+#[test]
+fn test_size() {
+    assert_eq!(core::mem::size_of::<Regex>(), 3 * MAX_REGEXP_OBJECTS + MAX_CHAR_CLASS_LEN);
+    assert_eq!(core::mem::size_of::<Regex>(), 130);
+    // Big stack items
+    assert_eq!(core::mem::size_of::<[NfaStateInfo; MAX_REGEXP_OBJECTS]>(), 16 * MAX_REGEXP_OBJECTS);
+    assert_eq!(core::mem::size_of::<[NfaStateInfo; MAX_REGEXP_OBJECTS]>(), 480);
+}

@@ -1,3 +1,4 @@
+use std;
 use tiny_regex_rs::matches;
 
 #[test]
@@ -24,4 +25,9 @@ fn test_nearly_empty() {
 #[test]
 fn simple() {
     assert_eq!(Some(&b"abc"[..]), matches(b"abc", b"abc"));
+}
+
+#[test]
+fn simple_quant() {
+    assert_eq!(Some(&b"aa"[..]), matches(b"a*$", b"Xaa"));
 }

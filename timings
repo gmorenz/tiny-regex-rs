@@ -1,6 +1,6 @@
 Rust time
-100.48user 32.66system 2:04.59elapsed 106%CPU (0avgtext+0avgdata 30424maxresident)k
-0inputs+9880outputs (1major+18951847minor)pagefaults 0swaps
+0.18user 0.03system 0:00.21elapsed 100%CPU (0avgtext+0avgdata 29984maxresident)k
+0inputs+312outputs (0major+20349minor)pagefaults 0swaps
 C time
-98.44user 33.16system 2:03.00elapsed 106%CPU (0avgtext+0avgdata 30988maxresident)k
-0inputs+280outputs (0major+18795706minor)pagefaults 0swaps
+6.10user 0.05system 0:06.16elapsed 99%CPU (0avgtext+0avgdata 30632maxresident)k
+0inputs+280outputs (0major+33328minor)pagefaults 0swaps

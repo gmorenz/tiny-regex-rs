@@ -1,8 +1,9 @@
 #![cfg_attr(not(feature = "debug"), no_std)]
-#[cfg(not(feature = "debug"))] extern crate core;
+extern crate core;
 
-use core::{u8, u16};
+use core::u8;
 
+// Note: Since we use u8's as indicies, these can be at most 255.
 pub const MAX_REGEXP_OBJECTS: usize = 30; // Note: If you increase this also increase the size of StateBitmap
 pub const MAX_CHAR_CLASS_LEN: usize = 40;
 pub const MAX_NESTING: usize = 20;
@@ -25,8 +26,8 @@ enum RegexObj {
     End,
     Char(u8),
     // Use short indicies so we can pack this enum into a u32 :)
-    CharClass{ begin: u16, len: u8 },
-    InvCharClass{ begin: u16, len: u8 },
+    CharClass{ begin: u8, len: u8 },
+    InvCharClass{ begin: u8, len: u8 },
     Digit,
     NotDigit,
     Alpha,
@@ -103,11 +104,11 @@ impl Regex {
                         i += 1;
                     }
 
-                    if len > u8::MAX as usize || class_bufidx > u16::MAX as usize {
+                    if len > u8::MAX as usize || class_bufidx > u8::MAX as usize {
                         return None
                     }
 
-                    let begin = class_bufidx as u16;
+                    let begin = class_bufidx as u8;
                     class_bufidx += len;
                     if !negated {
                         CharClass{ begin, len: len as u8 }
@@ -315,7 +316,7 @@ fn match_dot(_: u8) -> bool {
     true
 }
 
-fn match_charclass(regex: &Regex, begin: u16, len: u8, c: u8) -> bool {
+fn match_charclass(regex: &Regex, begin: u8, len: u8, c: u8) -> bool {
     let class = &regex.class_buf[begin as usize.. begin as usize + len as usize];
     let mut i = 0;
     while i < class.len() {

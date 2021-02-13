@@ -1,5 +1,5 @@
 use std;
-use tiny_regex_rs::matches;
+use tiny_regex_rs::{matches, Regex, MAX_REGEXP_OBJECTS, MAX_CHAR_CLASS_LEN};
 
 #[test]
 fn test_brackets() {
@@ -30,4 +30,9 @@ fn simple() {
 #[test]
 fn simple_quant() {
     assert_eq!(Some(&b"aa"[..]), matches(b"a*$", b"Xaa"));
+}
+
+#[test]
+fn test_size() {
+    assert_eq!(std::mem::size_of::<Regex>(), 3 * MAX_REGEXP_OBJECTS + MAX_CHAR_CLASS_LEN);
 }
